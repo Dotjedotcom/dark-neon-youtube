@@ -1,0 +1,23 @@
+{
+  "name": "Dark Neon Summoner",
+  "short_name": "Dark Neon",
+  "description": "Summon neon-drenched YouTube sessions with a single skull tap.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#050807",
+  "theme_color": "#33f0a6",
+  "icons": [
+    {
+      "src": "/icons/skull.svg",
+      "sizes": "128x128",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "16x16 32x32 48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

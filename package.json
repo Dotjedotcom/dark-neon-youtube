@@ -1,0 +1,31 @@
+{
+  "name": "dark-neon-youtube-vue",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .ts,.tsx,.vue"
+  },
+  "dependencies": {
+    "vue": "^3.5.21"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@rushstack/eslint-patch": "^1.12.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.6.0",
+    "@types/node": "^24.5.2",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.35.0",
+    "eslint-plugin-vue": "^10.4.0",
+    "postcss": "^8.5.6",
+    "prettier": "^3.6.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.6"
+  }
+}
