@@ -1,5 +1,9 @@
 <template>
-<main class="app-shell min-h-screen grid place-items-center p-6" :style="appStyleVars">
+<main
+  class="app-shell min-h-screen grid place-items-center p-6"
+  :style="appStyleVars"
+  @pointerdown="onStartScreenPointerDown"
+>
     <div class="text-center space-y-8">
       <h1 class="text-4xl md:text-6xl font-black tracking-tight">
         <span class="text-white">Dark</span>
@@ -21,8 +25,12 @@
     <transition name="fade" mode="out-in">
       <FullscreenYouTube
         v-if="show"
-        :video-id="'B7mhQipwdb0'"
-        :start-seconds="280"
+        :video-id="currentVideoId"
+        :start-seconds="currentStartSeconds"
+        :auto-fullscreen="playerAutoFullscreen"
+        :initial-playlist-id="currentPlaylistId"
+        :initial-playlist-label="currentPlaylistLabel"
+        :force-video-id="shouldForceVideoId"
         @close="handleClose"
       />
     </transition>
@@ -38,16 +46,35 @@ import NeonSkullButton from './components/NeonSkullButton.vue'
 import { ensureYouTubeIframeAPIReady } from './utils/youtube'
 import hoverSoundUrl from './assets/whoosh.wav'
 import backgroundImageUrl from './assets/bg.jpg'
+import { defaultTracks, defaultPlaylists } from './data/media'
 
+type MediaSelection = { type: 'video' | 'playlist'; id: string; label?: string; startSeconds?: number }
+const DEFAULT_VIDEO_ID = 'B7mhQipwdb0'
+const DEFAULT_START_SECONDS = 280
 const show = ref(false)
 const buttonStage = ref<'idle' | 'confirm'>('idle')
+const playerAutoFullscreen = ref(true)
 const summonAudio = ref<HTMLAudioElement | null>(null)
 const flashVisible = ref(false)
 let flashTimer: ReturnType<typeof setTimeout> | null = null
 let flashHideTimer: ReturnType<typeof setTimeout> | null = null
+const TRIPLE_CLICK_WINDOW_MS = 450
+let recentPointerTimestamps: number[] = []
+const initialMedia = ref<MediaSelection | null>(null)
 
 const summonLabel = computed(() => (buttonStage.value === 'confirm' ? 'Really?' : 'Summon the Video'))
 const appStyleVars = computed(() => ({ '--app-background-image': `url(${backgroundImageUrl})` }))
+const currentVideoId = computed(() => (initialMedia.value?.type === 'video' ? initialMedia.value.id : DEFAULT_VIDEO_ID))
+const currentStartSeconds = computed(() => {
+  if (!initialMedia.value) return DEFAULT_START_SECONDS
+  if (initialMedia.value.type === 'playlist') {
+    return initialMedia.value.startSeconds ?? 0
+  }
+  return initialMedia.value.startSeconds ?? 0
+})
+const currentPlaylistId = computed(() => (initialMedia.value?.type === 'playlist' ? initialMedia.value.id : null))
+const currentPlaylistLabel = computed(() => (initialMedia.value?.type === 'playlist' ? initialMedia.value.label ?? null : null))
+const shouldForceVideoId = computed(() => initialMedia.value?.type === 'video' || false)
 
 onMounted(() => {
   ensureYouTubeIframeAPIReady()
@@ -65,7 +92,7 @@ function handleSummonPress() {
     return
   }
 
-  show.value = true
+  openPlayer(true, null)
   buttonStage.value = 'idle'
 }
 
@@ -83,6 +110,8 @@ function playSummonSound() {
 function handleClose() {
   show.value = false
   buttonStage.value = 'idle'
+  playerAutoFullscreen.value = true
+  initialMedia.value = null
 }
 
 function scheduleFlash() {
@@ -106,6 +135,57 @@ function clearFlashTimers() {
     clearTimeout(flashHideTimer)
     flashHideTimer = null
   }
+}
+
+function onStartScreenPointerDown(event: PointerEvent) {
+  if (show.value) {
+    recentPointerTimestamps = []
+    return
+  }
+  const path = event.composedPath()
+  if (path.some(node => (node as HTMLElement | undefined)?.dataset?.summonButton === 'true')) {
+    recentPointerTimestamps = []
+    return
+  }
+
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  recentPointerTimestamps = recentPointerTimestamps.filter(ts => now - ts <= TRIPLE_CLICK_WINDOW_MS)
+  recentPointerTimestamps.push(now)
+
+  if (recentPointerTimestamps.length >= 3) {
+    recentPointerTimestamps = []
+    const media = pickRandomMedia()
+    openPlayer(false, media)
+  }
+}
+
+function openPlayer(autoFullscreen: boolean, media: MediaSelection | null) {
+  playerAutoFullscreen.value = autoFullscreen
+  initialMedia.value = media
+  show.value = true
+  recentPointerTimestamps = []
+}
+
+function pickRandomMedia(): MediaSelection {
+  const options: MediaSelection[] = [
+    ...defaultTracks.map(track => ({
+      type: 'video' as const,
+      id: track.id,
+      label: track.title,
+      startSeconds: track.start,
+    })),
+    ...defaultPlaylists.map(list => ({
+      type: 'playlist' as const,
+      id: list.id,
+      label: list.title,
+      startSeconds: 0,
+    })),
+  ]
+  if (!options.length) {
+    return { type: 'video', id: DEFAULT_VIDEO_ID, startSeconds: DEFAULT_START_SECONDS }
+  }
+  const index = Math.floor(Math.random() * options.length)
+  return options[index]
 }
 </script>
 

@@ -21,6 +21,7 @@
           <button
             class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center border border-white/10 text-white text-2xl animate-pulse"
             aria-label="Toggle video controls"
+            ref="controlsButton"
             @click="controlsOpen = !controlsOpen"
             @pointerenter="onHornsPointerEnter"
             @pointerleave="onHornsPointerLeave"
@@ -78,7 +79,7 @@
                           ]"
                           role="option"
                           :aria-selected="index === highlightedSuggestion"
-                          @mousedown.prevent="applySuggestion(suggestion)"
+                          @mousedown.prevent="selectSuggestion(suggestion)"
                           @mouseenter="highlightedSuggestion = index"
                         >
                           <span class="truncate pr-3">{{ suggestion.title }}</span>
@@ -133,6 +134,24 @@
                   step="1"
                   class="w-full accent-neon-500"
                   @input="onVolumeInput"
+                />
+              </div>
+
+              <div class="space-y-1">
+                <div class="flex items-center justify-between text-[11px] uppercase tracking-wide text-neutral-400">
+                  <span>{{ formattedCurrentTime }}</span>
+                  <span>{{ formattedDuration }}</span>
+                </div>
+                <input
+                  :value="currentTime"
+                  :max="duration > 0 ? duration : 0"
+                  min="0"
+                  step="1"
+                  type="range"
+                  class="w-full accent-neon-500"
+                  @input="onProgressInput"
+                  @change="onProgressCommit"
+                  @blur="onProgressBlur"
                 />
               </div>
 
@@ -204,16 +223,30 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, computed, nextTick, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed, watch, withDefaults } from 'vue'
 import hoverSoundUrl from '../assets/whoosh.wav'
 import backgroundImageUrl from '../assets/bg.jpg'
 import { ensureYouTubeIframeAPIReady } from '../utils/youtube'
-
-type Track = { id: string; title: string; start?: number }
-type Playlist = { id: string; title: string }
+import type { Track, Playlist } from '../data/media'
+import { defaultTracks, defaultPlaylists } from '../data/media'
 type MediaSuggestion = { id: string; title: string; type: 'video' | 'playlist' }
+type ParsedMedia =
+  | { type: 'video'; id: string; label: string }
+  | { type: 'playlist'; id: string; label: string }
 
-const props = defineProps<{ videoId: string; startSeconds?: number }>()
+const props = withDefaults(defineProps<{
+  videoId: string
+  startSeconds?: number
+  autoFullscreen?: boolean
+  initialPlaylistId?: string | null
+  initialPlaylistLabel?: string | null
+  forceVideoId?: boolean
+}>(), {
+  autoFullscreen: true,
+  initialPlaylistId: null,
+  initialPlaylistLabel: null,
+  forceVideoId: false,
+})
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const wrap = ref<HTMLDivElement | null>(null)
@@ -223,88 +256,30 @@ const playerReady = ref(false)
 const controlsOpen = ref(false)
 const videoOpacity = ref(0.75)
 const volume = ref(80)
+const currentTime = ref(0)
+const duration = ref(0)
 const mediaInput = ref('')
+const controlsButton = ref<HTMLButtonElement | null>(null)
 const currentSource = ref<'track' | 'playlist'>('track')
 const currentPlaylistLabel = ref<string | null>(null)
 const inputFocused = ref(false)
 const highlightedSuggestion = ref(0)
 let blurTimeout: ReturnType<typeof setTimeout> | null = null
 const suggestionListId = `media-suggestions-${Math.random().toString(36).slice(2)}`
+const isSeeking = ref(false)
+let progressTimer: ReturnType<typeof setInterval> | null = null
 
-const defaultTracks: Track[] = [
-  { id: 'ZhiV-gAOT1g', start: 24, title: '10 Styles of Metal' },
-  { id: 'WG2RMlUK2So', start: 13, title: 'Lokust - Guiltless' },
-  { id: 'B7mhQipwdb0', start: 280, title: 'Infant Annihilator - Blasphemian' },
-  { id: 'LPHJLB1ZeAc', start: 51, title: 'Body Count - Raining in Blood / Postmortem 2017' },
-  { id: 'WfKUWvVCwvE', start: 0, title: 'Slayer - Bloodline' },
-  { id: 'SImHi16cwqc', start: 13, title: 'Infant Annihilator - Cuntcrusher Drum Playthrough' },
-  { id: 'Eq2PQm6FqVY', start: 0, title: 'Iniquity - Growl Karaoke' },
-  { id: 'Osqf4oIK0E8', start: 0, title: 'Igorrr - Very Noise' },
-  { id: 'UZzYxGZ7Hmc', start: 0, title: 'Igorrr - Cheval' },
-  { id: 'RoBw0Fz8mu4', start: 0, title: 'Public Enemy - Chanel Zero' },
-  { id: 'f8HLrh1U-z8', start: 0, title: 'S.O.D. - Kill Yourself' },
-  { id: 'yiyYqOdUaWU', start: 0, title: 'S.O.D. - March of the S.O.D. / Sargent D / Speak English Or Die' },
-  { id: 'eAgITc08XGk', start: 0, title: 'The Monolith Deathcult - Commanders Encircled With Foes' },
-  { id: 'IJkMrl4AG8w', start: 0, title: 'Deicide - Homage to Satan' },
-  { id: 'Bd4bM0Pp8NU', start: 0, title: 'Slayer - God Hates Us All' },
-  { id: 'qyYmS_iBcy4', start: 0, title: 'Lorna Shore - To the Hellfire' },
-  { id: 'X4bgXH3sJ2Q', start: 0, title: 'Iron Maiden - The Trooper' },
-  { id: 'AkFqg5wAuFk', start: 0, title: 'Pantera - Walk' },
-  { id: 'DuSHgiZFVuI', start: 0, title: 'Napalm Death - The World Keeps Turning' },
-  { id: 'npa8qUNEIFY', start: 0, title: 'Napalm Death - On the Brink of Extinction' },
-  { id: 'pgWVjSZGMos', start: 0, title: 'Napalm Death - Unchallenged Hate' },
-  { id: 'c4zxrYUOXLo', start: 0, title: 'Pestilence - Out of the Body' },
-  { id: '6qEzTzv4w6E', start: 0, title: 'Gorefest - Confessions of a Serial Killer' },
-  { id: 'g1YH7PFy3no', start: 0, title: 'Gorefest - For the Masses' },
-  { id: 'oX4KTg3W3Bc', start: 20, title: 'Entombed - Left Hand Path' },
-  { id: 'nxcJW6bs5os', start: 0, title: "Suicidal Tendencies - You Can't Bring Me Down" },
-  { id: 'nCtjAmtIGf0', start: 0, title: 'At the Gates - Blinded by Fear' },
-  { id: 'AG-menlRlAg', start: 0, title: 'Dismember - Left Hand Path' },
-  { id: 'FRnh-e9Kmp0', start: 0, title: 'Terrorizer - Storm of Stress' },
-  { id: 'F5nGo7yUtlE', start: 0, title: 'Carcass - Corporal Jigsore Quandary' },
-  { id: 'ZpbpOgUybBM', start: 0, title: 'Carcass - Heartwork' },
-  { id: '6BOHpjIZyx0', start: 0, title: 'Sepultura - Arise' },
-  { id: 'HsKP30C4D7s', start: 0, title: 'Morbid Angel - Chapel of Ghouls' },
-  { id: '6ODNxy3YOPU', start: 0, title: 'Sepultura - Refuse/Resist' },
-  { id: '9J_z_kjGaVs', start: 0, title: 'Igorrr - Infestis' },
-  { id: '_s1qY29Z-go', start: 0, title: 'Reaper - Coach' },
-  { id: 'N0OBF83rL-8', start: 12, title: 'Igorrr - Headbutt' },
-  { id: 'dGice3BmnmM', start: 0, title: 'Current Value - Dark Rain' },
-  { id: 'tVZw7vQGR30', start: 0, title: 'Improver - Feel the future' },
-  { id: 'rBmMzabdEKQ', start: 6, title: 'DubFX - No rest for the wicked' },
-  { id: 'Q3oItpVa9fs', start: 0, title: 'Nigel Stanford - Cymatics: Science vs Music' },
-  { id: 'rULmvm48_o', start: 0, title: 'Black Sun Empire & Noisia - Feed the Machine' },
-  { id: 'DRIC6Mb6xzg', start: 0, title: 'Rawtekk - Snowflakes (neuropop VIP)' },
-  { id: 'Q1xR3Xidq84', start: 0, title: 'Southpark - Trump' },
-  { id: 'xlu1xTH3Iqc', start: 0, title: 'Southpark - I\'m Master Debating, Mom' },
-  { id: 'pdiiEW8XWqw', start: 0, title: 'Southpark - Funny clips' },
-  { id: 'V6LggtNzt3o', start: 0, title: 'MMA - KO\'s' },
-  { id: '8sBPkR9lbeo', start: 0, title: 'UFC - Crocop' },
-  { id: 'iuhoXouDN-Y', start: 0, title: 'UFC - Aerts' },
-  { id: 'M9vjD48xJ6o', start: 0, title: 'Pancrase - Rutten' },
-  { id: 'puTWqS1__CI', start: 0, title: 'KOTS - KO\'s' },
-  { id: 'IwLSrNu1ppI', start: 0, title: 'J-Cut & Kolt Siewerts - The Flute Tune (Soulpride Remix)' },
-  { id: 'pZNpxhPuU-g', start: 0, title: 'RAY VOLPE & TYNAN - DANGER (Official Visualizer)' },
-  { id: '9uhl6XRtipg', start: 0, title: 'A.M.C. - Eject' },
-  { id: 'h_kHOvqjDhI', start: 0, title: 'Noisia - Dead limit' },
-  { id: 'xtppf3xkby4', start: 0, title: 'Noisia - Stigma' },
-  { id: 'bAhabqiaL50', start: 0, title: 'Black Sun Empire feat. Foreign Beggars - Dawn of a Dark Day' },
-  { id: 'geGdGoRXv5s', start: 0, title: 'Audio - Topic - Collision' },
-  { id: '21bsSdIyKbo', start: 0, title: 'Drum and Bass Mix #132' },
-  { id: 'TZ827lkktYs', start: 0, title: 'Aphex Twin - Come to daddy' },
-  { id: 'pvt3l2LI_sA', start: 0, title: 'Prins Fatty - Black Rabbit' },
-  { id: 'JGMPri-Yttk', start: 0, title: 'A.M.C. - BASS' },
-  { id: 'Y-Xg8pWhicY', start: 0, title: 'Reaper - The Power' },
-  { id: 'KKJprZqU_oU', start: 0, title: 'Southpark - Respect my authority' },
-]
-const defaultPlaylists: Playlist[] = [
-  { id: 'PLd4QZO8a_HsEn6EEaFfWIa49NKMTqkYt5', title: 'Dark Neon Drum & Bass' },
-  { id: 'PLC3b0k8F4pv7F-SEmiY7-ZdGg0G8hlt2y', title: 'Cyberpunk Visual Synthwave' },
-  { id: 'PLkLimRXN6NKyIFzONVd1Rv0O5jXv0mI0B', title: 'Metal Meets Orchestra' },
-]
-const tracks = ref<Track[]>([...defaultTracks])
+const STORAGE_KEYS = {
+  tracks: 'dark-neon-user-tracks-v1',
+  playlists: 'dark-neon-user-playlists-v1',
+} as const
+
+const userTracks = ref<Track[]>([])
+const userPlaylists = ref<Playlist[]>([])
+const tracks = ref<Track[]>([])
 const currentTrackIndex = ref(0)
 
+initializeMediaLibrary()
 initializeInitialTrackSelection()
 
 const currentTrack = computed(() => tracks.value[currentTrackIndex.value] ?? null)
@@ -328,12 +303,29 @@ const isFullscreen = ref(false)
 let hoverAudio: HTMLAudioElement | null = null
 let hoverAudioUnlocked = false
 let hoverAudioPendingStart = false
-let removeHoverUnlock: (() => void) | null = null
+const MAX_GESTURE_CREDITS = 4
+let gestureCredits = 0
+const gestureQueue: Array<() => void> = []
+const gestureQueueSet = new Set<() => void>()
+const gesturePlaybackAction = () => {
+  try { player?.playVideo?.() } catch {}
+}
 
-const allSuggestions = computed<MediaSuggestion[]>(() => [
-  ...defaultTracks.map(track => ({ id: track.id, title: track.title, type: 'video' as const })),
-  ...defaultPlaylists.map(list => ({ id: list.id, title: list.title, type: 'playlist' as const })),
-])
+const allSuggestions = computed<MediaSuggestion[]>(() => {
+  const suggestions = new Map<string, MediaSuggestion>()
+  const addSuggestion = (suggestion: MediaSuggestion) => {
+    if (!suggestion.id) return
+    const key = `${suggestion.type}:${suggestion.id}`
+    if (suggestions.has(key)) return
+    suggestions.set(key, suggestion)
+  }
+
+  tracks.value.forEach(track => addSuggestion({ id: track.id, title: track.title, type: 'video' }))
+  defaultPlaylists.forEach(list => addSuggestion({ id: list.id, title: list.title, type: 'playlist' }))
+  userPlaylists.value.forEach(list => addSuggestion({ id: list.id, title: list.title, type: 'playlist' }))
+
+  return Array.from(suggestions.values())
+})
 
 const filteredSuggestions = computed<MediaSuggestion[]>(() => {
   const query = mediaInput.value.trim()
@@ -358,8 +350,23 @@ const activeSuggestionId = computed(() => {
   if (!showSuggestions.value || !filteredSuggestions.value.length) return undefined
   return `${suggestionListId}-option-${highlightedSuggestion.value}`
 })
+const formattedCurrentTime = computed(() => formatTime(currentTime.value))
+const formattedDuration = computed(() => formatTime(duration.value))
 
 function initializeInitialTrackSelection() {
+  if (props.initialPlaylistId) {
+    currentSource.value = 'playlist'
+    currentPlaylistLabel.value = props.initialPlaylistLabel ?? shortLabel(props.initialPlaylistId)
+    return
+  }
+
+  if (props.forceVideoId) {
+    setCurrentTrackById(props.videoId)
+    currentSource.value = 'track'
+    currentPlaylistLabel.value = null
+    return
+  }
+
   const subdomainTrack = pickTrackForSubdomain()
   if (subdomainTrack) {
     setCurrentTrackById(subdomainTrack.id)
@@ -385,11 +392,17 @@ function setCurrentTrackById(id: string) {
   const existingIndex = tracks.value.findIndex(track => track.id === id)
   if (existingIndex !== -1) {
     currentTrackIndex.value = existingIndex
+    currentTime.value = tracks.value[existingIndex]?.start ?? 0
+    currentSource.value = 'track'
+    currentPlaylistLabel.value = null
     return
   }
 
   tracks.value.unshift({ id, title: readableLabel(id) })
   currentTrackIndex.value = 0
+  currentTime.value = 0
+  currentSource.value = 'track'
+  currentPlaylistLabel.value = null
 }
 
 function pickTrackForSubdomain(): Track | null {
@@ -446,8 +459,11 @@ function requestFs(el: HTMLElement) {
 
 onMounted(async () => {
   prepareHoverAudio()
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
   if (!playerHost.value || !wrap.value) return
-  requestFs(wrap.value)
+  if (props.autoFullscreen) {
+    requestFs(wrap.value)
+  }
   await ensureYouTubeIframeAPIReady()
   const w = window as any
   player = new w.YT.Player(playerHost.value, {
@@ -465,17 +481,39 @@ onMounted(async () => {
     events: {
       onReady: () => {
         playerReady.value = true
-        if (currentTrack.value && currentTrack.value.start !== undefined) {
-          player.seekTo(currentTrack.value.start, true)
-        }
         if (typeof player.setVolume === 'function') {
           player.setVolume(volume.value)
         }
-        player.playVideo()
+        if (props.initialPlaylistId) {
+          const startSeconds = props.startSeconds ?? 0
+          currentSource.value = 'playlist'
+          currentPlaylistLabel.value = props.initialPlaylistLabel ?? shortLabel(props.initialPlaylistId)
+          currentTrackIndex.value = 0
+          currentTime.value = startSeconds
+          player.loadPlaylist?.({ listType: 'playlist', list: props.initialPlaylistId, index: 0, startSeconds })
+          duration.value = player.getDuration?.() ?? duration.value
+          ensureProgressTimer()
+          ensurePlayback()
+          isPlaying.value = true
+          return
+        }
+
+        const desiredStart = props.startSeconds ?? currentTrack.value?.start ?? 0
+        if (typeof player.seekTo === 'function') {
+          player.seekTo(desiredStart, true)
+        }
+        currentTime.value = desiredStart
+        duration.value = player.getDuration?.() ?? duration.value
+        ensureProgressTimer()
+        ensurePlayback()
+        isPlaying.value = true
       },
       onStateChange: (e: any) => {
         if (e.data === w.YT.PlayerState.ENDED) handleTrackEnded()
-        if (e.data === w.YT.PlayerState.PLAYING) isPlaying.value = true
+        if (e.data === w.YT.PlayerState.PLAYING) {
+          isPlaying.value = true
+          ensureProgressTimer()
+        }
         if (e.data === w.YT.PlayerState.PAUSED) isPlaying.value = false
       }
     }
@@ -493,9 +531,9 @@ function onEsc(e: KeyboardEvent) {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onEsc)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
   stopHoverSound()
-  removeHoverUnlock?.()
-  removeHoverUnlock = null
+  clearProgressTimer()
   try { player?.destroy?.() } catch {}
 })
 
@@ -506,15 +544,19 @@ function playTrackByIndex(index: number) {
   currentTrackIndex.value = index
   currentSource.value = 'track'
   currentPlaylistLabel.value = null
-  player.loadVideoById({ videoId: next.id, startSeconds: next.start ?? 0 })
-  player.playVideo()
+  const startSeconds = next.start ?? 0
+  currentTime.value = startSeconds
+  player.loadVideoById({ videoId: next.id, startSeconds })
+  ensurePlayback()
   isPlaying.value = true
+  ensureProgressTimer()
 }
 
 function playNext() {
   if (!playerReady.value) return
   if (currentSource.value === 'playlist') {
     player.nextVideo?.()
+    ensurePlayback()
     isPlaying.value = true
     return
   }
@@ -526,6 +568,7 @@ function playPrevious() {
   if (!playerReady.value) return
   if (currentSource.value === 'playlist') {
     player.previousVideo?.()
+    ensurePlayback()
     isPlaying.value = true
     return
   }
@@ -553,38 +596,28 @@ function togglePlayPause() {
     player.pauseVideo()
     isPlaying.value = false
   } else {
-    player.playVideo()
+    ensurePlayback()
     isPlaying.value = true
   }
 }
 
+function ensurePlayback() {
+  if (!player) return
+  try {
+    player.playVideo?.()
+  } catch {}
+  requestGesture(gesturePlaybackAction)
+}
+
 function handleMediaInput() {
-  if (!mediaInput.value.trim() || !playerReady.value) return
-  const parsed = parseMediaInput(mediaInput.value.trim())
+  const raw = mediaInput.value.trim()
+  if (!raw) return
+  const parsed = parseMediaInput(raw)
   if (!parsed) return
-
-  if (parsed.type === 'playlist') {
-    player.loadPlaylist({ list: parsed.id })
-    isPlaying.value = true
-    currentSource.value = 'playlist'
-    currentPlaylistLabel.value = parsed.label
-    currentTrackIndex.value = 0
-  } else {
-    const existingIndex = tracks.value.findIndex(track => track.id === parsed.id)
-    if (existingIndex === -1) {
-      tracks.value.unshift({ id: parsed.id, title: parsed.label })
-      currentTrackIndex.value = 0
-    } else {
-      currentTrackIndex.value = existingIndex
-    }
-    currentSource.value = 'track'
-    currentPlaylistLabel.value = null
-    player.loadVideoById({ videoId: parsed.id, startSeconds: 0 })
-    player.playVideo()
-    isPlaying.value = true
+  const started = playParsedMedia(parsed)
+  if (started) {
+    mediaInput.value = ''
   }
-
-  mediaInput.value = ''
 }
 
 function clearBlurTimer() {
@@ -626,10 +659,37 @@ function highlightBoundary(position: 'first' | 'last') {
   highlightedSuggestion.value = position === 'first' ? 0 : filteredSuggestions.value.length - 1
 }
 
+function ensureProgressTimer() {
+  if (progressTimer) return
+  updateProgressFromPlayer()
+  progressTimer = setInterval(updateProgressFromPlayer, 500)
+}
+
+function clearProgressTimer() {
+  if (progressTimer) {
+    clearInterval(progressTimer)
+    progressTimer = null
+  }
+}
+
+function updateProgressFromPlayer() {
+  if (!playerReady.value || !player) return
+  const total = player.getDuration?.()
+  if (Number.isFinite(total) && total && total > 0) {
+    duration.value = total
+  }
+  if (isSeeking.value) return
+  const current = player.getCurrentTime?.()
+  if (Number.isFinite(current)) {
+    const effectiveTotal = Number.isFinite(total) && total ? total : undefined
+    currentTime.value = effectiveTotal ? Math.min(current, effectiveTotal) : current
+  }
+}
+
 function commitSelection(force = false) {
   const activeSuggestion = filteredSuggestions.value[highlightedSuggestion.value]
   if (!force && showSuggestions.value && activeSuggestion) {
-    applySuggestion(activeSuggestion)
+    selectSuggestion(activeSuggestion)
     return
   }
   clearBlurTimer()
@@ -637,34 +697,204 @@ function commitSelection(force = false) {
   handleMediaInput()
 }
 
-function applySuggestion(suggestion: MediaSuggestion) {
+function selectSuggestion(suggestion: MediaSuggestion) {
   clearBlurTimer()
-  mediaInput.value = suggestion.id
   inputFocused.value = false
   highlightedSuggestion.value = 0
-  nextTick(() => {
-    handleMediaInput()
-  })
+  const parsed: ParsedMedia = suggestion.type === 'playlist'
+    ? { type: 'playlist', id: suggestion.id, label: suggestion.title }
+    : { type: 'video', id: suggestion.id, label: suggestion.title }
+  const started = playParsedMedia(parsed)
+  mediaInput.value = started ? '' : suggestion.id
+}
+
+function playParsedMedia(parsed: ParsedMedia): boolean {
+  if (!playerReady.value || !player) return false
+
+  if (parsed.type === 'playlist') {
+    const playlist: Playlist = { id: parsed.id, title: parsed.label }
+    rememberPlaylist(playlist)
+    currentSource.value = 'playlist'
+    currentPlaylistLabel.value = parsed.label
+    currentTrackIndex.value = 0
+    currentTime.value = 0
+    player.loadPlaylist?.({ listType: 'playlist', list: parsed.id, index: 0, startSeconds: 0 })
+    ensurePlayback()
+    isPlaying.value = true
+    ensureProgressTimer()
+    return true
+  }
+
+  const existingIndex = tracks.value.findIndex(track => track.id === parsed.id)
+  if (existingIndex === -1) {
+    const newTrack: Track = { id: parsed.id, title: parsed.label }
+    tracks.value.unshift(newTrack)
+    currentTrackIndex.value = 0
+    rememberTrack(newTrack)
+  } else {
+    currentTrackIndex.value = existingIndex
+  }
+
+  currentSource.value = 'track'
+  currentPlaylistLabel.value = null
+  const current = tracks.value[currentTrackIndex.value]
+  const startSeconds = current?.start ?? 0
+  currentTime.value = startSeconds
+  player.loadVideoById?.({ videoId: parsed.id, startSeconds })
+  ensurePlayback()
+  isPlaying.value = true
+  ensureProgressTimer()
+  return true
+}
+
+function rememberTrack(track: Track) {
+  if (!track.id) return
+  if (defaultTracks.some(defaultTrack => defaultTrack.id === track.id)) return
+  if (userTracks.value.some(saved => saved.id === track.id)) return
+  const stored: Track = { id: track.id, title: track.title, ...(track.start !== undefined ? { start: track.start } : {}) }
+  userTracks.value.unshift(stored)
+  if (userTracks.value.length > 100) {
+    userTracks.value.length = 100
+  }
+  persistUserTracks()
+}
+
+function rememberPlaylist(list: Playlist) {
+  if (!list.id) return
+  if (defaultPlaylists.some(defaultList => defaultList.id === list.id)) return
+  if (userPlaylists.value.some(saved => saved.id === list.id)) return
+  const stored: Playlist = { id: list.id, title: list.title }
+  userPlaylists.value.unshift(stored)
+  if (userPlaylists.value.length > 100) {
+    userPlaylists.value.length = 100
+  }
+  persistUserPlaylists()
+}
+
+function persistUserTracks() {
+  if (typeof window === 'undefined') return
+  try {
+    const payload = userTracks.value.slice(0, 100).map(track => ({
+      id: track.id,
+      title: track.title,
+      ...(track.start !== undefined ? { start: track.start } : {}),
+    }))
+    window.localStorage.setItem(STORAGE_KEYS.tracks, JSON.stringify(payload))
+  } catch {
+    // Ignore persistence errors
+  }
+}
+
+function persistUserPlaylists() {
+  if (typeof window === 'undefined') return
+  try {
+    const payload = userPlaylists.value.slice(0, 100).map(list => ({
+      id: list.id,
+      title: list.title,
+    }))
+    window.localStorage.setItem(STORAGE_KEYS.playlists, JSON.stringify(payload))
+  } catch {
+    // Ignore persistence errors
+  }
+}
+
+function initializeMediaLibrary() {
+  if (typeof window !== 'undefined') {
+    try {
+      userTracks.value = readStoredTracks(window.localStorage.getItem(STORAGE_KEYS.tracks))
+    } catch {
+      userTracks.value = []
+    }
+    try {
+      userPlaylists.value = readStoredPlaylists(window.localStorage.getItem(STORAGE_KEYS.playlists))
+    } catch {
+      userPlaylists.value = []
+    }
+  }
+
+  if (userTracks.value.length > 100) {
+    userTracks.value.length = 100
+  }
+  if (userPlaylists.value.length > 100) {
+    userPlaylists.value.length = 100
+  }
+
+  tracks.value = mergeTrackCollections(userTracks.value, defaultTracks)
+}
+
+function readStoredTracks(serialized: string | null): Track[] {
+  if (!serialized) return []
+  try {
+    const parsed = JSON.parse(serialized)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map(item => {
+        if (!item || typeof item !== 'object') return null
+        const id = typeof item.id === 'string' ? item.id : ''
+        if (!id) return null
+        const title = typeof (item as any).title === 'string' && (item as any).title.trim()
+          ? (item as any).title
+          : readableLabel(id)
+        const startRaw = (item as any).start
+        const start = typeof startRaw === 'number' && Number.isFinite(startRaw) ? startRaw : undefined
+        return { id, title, ...(start !== undefined ? { start } : {}) }
+      })
+      .filter((entry): entry is Track => !!entry)
+  } catch {
+    return []
+  }
+}
+
+function readStoredPlaylists(serialized: string | null): Playlist[] {
+  if (!serialized) return []
+  try {
+    const parsed = JSON.parse(serialized)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map(item => {
+        if (!item || typeof item !== 'object') return null
+        const id = typeof item.id === 'string' ? item.id : ''
+        if (!id) return null
+        const title = typeof (item as any).title === 'string' && (item as any).title.trim()
+          ? (item as any).title
+          : shortLabel(id)
+        return { id, title }
+      })
+      .filter((entry): entry is Playlist => !!entry)
+  } catch {
+    return []
+  }
+}
+
+function mergeTrackCollections(primary: Track[], secondary: Track[]): Track[] {
+  const seen = new Set<string>()
+  const merged: Track[] = []
+  const add = (track: Track) => {
+    if (!track.id || seen.has(track.id)) return
+    seen.add(track.id)
+    merged.push({ id: track.id, title: track.title, ...(track.start !== undefined ? { start: track.start } : {}) })
+  }
+  primary.forEach(add)
+  secondary.forEach(add)
+  return merged
 }
 
 function handleTrackEnded() {
   isPlaying.value = false
   if (currentSource.value === 'playlist') {
+    const playlistIds = player?.getPlaylist?.()
+    const playlistIndex = player?.getPlaylistIndex?.()
+    if (Array.isArray(playlistIds) && typeof playlistIndex === 'number') {
+      if (!playlistIds.length || playlistIndex >= playlistIds.length - 1) {
+        playRandom()
+      }
+      return
+    }
+    playRandom()
     return
   }
+
   const currentId = currentTrack.value?.id
-  if (!currentId) return
-  if (Math.random() < 0.9) {
-    const start = currentTrack.value?.start ?? 0
-    if (player && typeof player.seekTo === 'function') {
-      player.seekTo(start, true)
-    }
-    if (player && typeof player.playVideo === 'function') {
-      player.playVideo()
-    }
-    isPlaying.value = true
-    return
-  }
   playRandom(currentId)
 }
 
@@ -687,7 +917,6 @@ function onHornsPointerUp() {
 function startHoverSound() {
   prepareHoverAudio()
   if (!hoverAudio) return
-  if (hoverAudioPendingStart && !hoverAudioUnlocked) return
   if (!hoverAudio.paused) return
   hoverAudio.currentTime = 0
   hoverAudio.play()
@@ -697,6 +926,7 @@ function startHoverSound() {
     })
     .catch(() => {
       hoverAudioPendingStart = true
+      requestGesture(startHoverSound)
     })
 }
 
@@ -726,6 +956,32 @@ function onVolumeInput(event: Event) {
   }
 }
 
+function onProgressInput(event: Event) {
+  if (!playerReady.value) return
+  const target = event.target as HTMLInputElement
+  const value = Number(target.value)
+  if (!Number.isFinite(value)) return
+  isSeeking.value = true
+  currentTime.value = value
+}
+
+function onProgressCommit(event: Event) {
+  if (!playerReady.value) return
+  const target = event.target as HTMLInputElement
+  const value = Number(target.value)
+  if (!Number.isFinite(value)) {
+    isSeeking.value = false
+    return
+  }
+  player.seekTo?.(value, true)
+  currentTime.value = value
+  isSeeking.value = false
+}
+
+function onProgressBlur() {
+  isSeeking.value = false
+}
+
 function toggleFullscreen() {
   if (!wrap.value) return
   if (document.fullscreenElement) {
@@ -749,35 +1005,31 @@ function prepareHoverAudio() {
   hoverAudio.load()
   hoverAudioUnlocked = false
   hoverAudioPendingStart = false
-
-  const unlock = () => {
-    if (!hoverAudio) return
-    hoverAudio.muted = true
-    hoverAudio.play()
-      .then(() => {
-        hoverAudio?.pause()
-        if (hoverAudio) {
-          hoverAudio.currentTime = 0
-          hoverAudio.muted = false
-        }
-        hoverAudioUnlocked = true
-        if (hoverAudioPendingStart) {
-          hoverAudioPendingStart = false
-          startHoverSound()
-        }
-        window.removeEventListener('pointerdown', unlock)
-        removeHoverUnlock = null
-      })
-      .catch(() => {
-        // keep listener for next pointer down if blocked
-      })
-  }
-
-  window.addEventListener('pointerdown', unlock)
-  removeHoverUnlock = () => window.removeEventListener('pointerdown', unlock)
+  requestGesture(unlockHoverAudio)
 }
 
-function parseMediaInput(value: string): { type: 'video'; id: string; label: string } | { type: 'playlist'; id: string; label: string } | null {
+function unlockHoverAudio() {
+  if (!hoverAudio) return
+  hoverAudio.muted = true
+  hoverAudio.play()
+    .then(() => {
+      hoverAudio?.pause()
+      if (hoverAudio) {
+        hoverAudio.currentTime = 0
+        hoverAudio.muted = false
+      }
+      hoverAudioUnlocked = true
+      if (hoverAudioPendingStart) {
+        hoverAudioPendingStart = false
+        startHoverSound()
+      }
+    })
+    .catch(() => {
+      requestGesture(unlockHoverAudio)
+    })
+}
+
+function parseMediaInput(value: string): ParsedMedia | null {
   try {
     const url = new URL(value)
     const list = url.searchParams.get('list')
@@ -807,6 +1059,17 @@ function shortLabel(id: string) {
   return id.slice(0, 10)
 }
 
+function formatTime(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '00:00'
+  const rounded = Math.floor(totalSeconds)
+  const hours = Math.floor(rounded / 3600)
+  const minutes = Math.floor((rounded % 3600) / 60)
+  const seconds = rounded % 60
+  const mm = hours > 0 ? String(minutes).padStart(2, '0') : String(minutes)
+  const ss = String(seconds).padStart(2, '0')
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
 function fuzzyScore(source: string, query: string) {
   if (!query) return Number.POSITIVE_INFINITY
   if (source.includes(query)) {
@@ -826,6 +1089,53 @@ function fuzzyScore(source: string, query: string) {
   }
 
   return score + tokens.length * 5
+}
+
+function requestGesture(action: () => void): boolean {
+  if (gestureCredits > 0) {
+    gestureCredits -= 1
+    gestureQueueSet.delete(action)
+    runGestureAction(action)
+    flushGestureQueue()
+    return true
+  }
+  if (gestureQueueSet.has(action)) {
+    return false
+  }
+  gestureQueue.push(action)
+  gestureQueueSet.add(action)
+  return false
+}
+
+function grantGestureCredit() {
+  gestureCredits = Math.min(MAX_GESTURE_CREDITS, gestureCredits + 1)
+  flushGestureQueue()
+}
+
+function flushGestureQueue() {
+  while (gestureCredits > 0 && gestureQueue.length) {
+    const action = gestureQueue.shift()
+    if (!action) continue
+    gestureQueueSet.delete(action)
+    gestureCredits -= 1
+    runGestureAction(action)
+  }
+}
+
+function runGestureAction(action: () => void) {
+  try {
+    action()
+  } catch (error) {
+    console.error('Gesture action failed', error)
+  }
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  const target = event.target as Node | null
+  if (controlsButton.value && target && controlsButton.value.contains(target)) {
+    return
+  }
+  grantGestureCredit()
 }
 
 watch(mediaInput, () => {

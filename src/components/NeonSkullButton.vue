@@ -5,7 +5,8 @@
       props.highlight
         ? 'bg-neon-600 shadow-[0_0_45px_rgba(51,240,166,0.65)] ring ring-offset-2 ring-neon-600/70 ring-offset-transparent'
         : 'bg-neon-600/95 shadow-[0_0_28px_rgba(51,240,166,0.45)] ring ring-offset-2 ring-neon-600/40 ring-offset-transparent'
-    ]"
+      ]"
+    data-summon-button="true"
     @click="emit('press')"
   >
     <span class="pointer-events-none absolute inset-0 -z-10 opacity-60 blur-2xl transition-[opacity,transform] duration-[420ms] ease-[cubic-bezier(0.23,1,0.32,1)] group-hover:opacity-90 group-hover:scale-[1.08]" style="background: radial-gradient(60% 60% at 50% 50%, rgba(51,240,166,0.45), transparent 60%);"></span>
