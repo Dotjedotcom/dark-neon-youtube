@@ -17,9 +17,12 @@
       ></div>
 
       <div class="absolute inset-0 pointer-events-none">
-        <div class="absolute bottom-4 left-4 flex flex-col gap-3 pointer-events-auto">
+        <div
+          class="absolute inset-x-4 bottom-0 sm:inset-x-auto sm:left-6 sm:bottom-6 flex flex-col-reverse sm:flex-col items-stretch sm:items-start gap-3 pointer-events-auto"
+          :style="controlsContainerStyle"
+        >
           <button
-            class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center border border-white/10 text-white text-2xl animate-pulse"
+            class="self-center sm:self-auto h-14 w-14 sm:h-12 sm:w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center border border-white/10 text-white text-3xl sm:text-2xl animate-pulse shadow-[0_12px_28px_rgba(0,0,0,0.35)]"
             aria-label="Toggle video controls"
             ref="controlsButton"
             @click="controlsOpen = !controlsOpen"
@@ -35,11 +38,11 @@
           <transition name="fade">
             <div
               v-if="controlsOpen"
-              class="w-72 rounded-2xl bg-black/80 backdrop-blur-md border border-white/10 p-4 text-white space-y-4"
+              class="controls-panel w-full sm:w-72 max-w-full rounded-3xl sm:rounded-2xl bg-black/80 backdrop-blur-xl sm:backdrop-blur-md border border-white/10 px-5 py-6 sm:p-4 text-white space-y-4 shadow-[0_-18px_45px_rgba(0,0,0,0.55)] sm:shadow-none max-h-[70vh] sm:max-h-none overflow-y-auto"
             >
               <div class="space-y-2">
                 <label class="text-xs uppercase tracking-wide text-neutral-300" for="media-id">Video / Playlist</label>
-                <div class="flex gap-2">
+                <form class="flex flex-col sm:flex-row gap-2" @submit.prevent="commitSelection(true)">
                   <div class="relative flex-1">
                     <input
                       id="media-id"
@@ -79,7 +82,7 @@
                           ]"
                           role="option"
                           :aria-selected="index === highlightedSuggestion"
-                          @mousedown.prevent="selectSuggestion(suggestion)"
+                          @pointerdown.prevent.stop="selectSuggestion(suggestion)"
                           @mouseenter="highlightedSuggestion = index"
                         >
                           <span class="truncate pr-3">{{ suggestion.title }}</span>
@@ -91,14 +94,15 @@
                     </transition>
                   </div>
                   <button
-                    class="px-3 py-2 rounded-lg bg-neon-600 hover:bg-neon-500 text-sm text-black font-medium"
-                    @click="commitSelection(true)"
+                    type="submit"
+                    class="self-stretch sm:self-auto px-3 py-2 rounded-lg bg-neon-600 hover:bg-neon-500 text-sm text-black font-medium flex items-center justify-center"
+                    @click.prevent="commitSelection(true)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
                       <path d="M4.5 5.653c0-1.501 1.621-2.43 2.927-1.7l10.387 5.847c1.333.75 1.333 2.65 0 3.4L7.427 19.047C6.121 19.777 4.5 18.848 4.5 17.347V5.653z" />
                     </svg>
                   </button>
-                </div>
+                </form>
               </div>
 
               <div v-if="nowPlayingLabel" class="text-xs text-neutral-300">
@@ -294,6 +298,11 @@ const wrapBackgroundStyle = computed(() => ({
   backgroundSize: 'cover',
   backgroundPosition: 'center',
   backgroundRepeat: 'no-repeat',
+}))
+const controlsContainerStyle = computed(() => ({
+  bottom: `calc(env(safe-area-inset-bottom, 0px) + 1rem)`,
+  paddingLeft: `calc(env(safe-area-inset-left, 0px))`,
+  paddingRight: `calc(env(safe-area-inset-right, 0px))`,
 }))
 const isPlaying = ref(false)
 const playerStyle = computed(() => ({
@@ -1171,6 +1180,12 @@ watch(filteredSuggestions, suggestions => {
   }
   50% {
     box-shadow: 0 0 24px rgba(109, 247, 193, 0.7), 0 0 50px rgba(51, 240, 166, 0.5);
+  }
+}
+
+@media (max-width: 640px) {
+  .controls-panel {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1.5rem);
   }
 }
 
